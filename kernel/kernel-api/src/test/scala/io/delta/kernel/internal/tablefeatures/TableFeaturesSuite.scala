@@ -155,7 +155,7 @@ class TableFeaturesSuite extends AnyFunSuite {
     val expected = Seq("columnMapping", "v2Checkpoint", "deletionVectors",
       "vacuumProtocolCheck", "rowTracking", "domainMetadata", "icebergCompatV2",
       "inCommitTimestamp", "appendOnly", "invariants",
-      "checkConstraints", "generatedColumns", "identityColumns"
+      "checkConstraints", "generatedColumns", "identityColumns", "timestampNtz"
     )
 
     assert(results.map(_.featureName()).toSet == expected.toSet)

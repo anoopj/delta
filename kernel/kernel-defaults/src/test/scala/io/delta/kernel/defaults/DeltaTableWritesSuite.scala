@@ -36,6 +36,7 @@ import io.delta.kernel.types.IntegerType.INTEGER
 import io.delta.kernel.types.StringType.STRING
 import io.delta.kernel.types.TimestampNTZType.TIMESTAMP_NTZ
 import io.delta.kernel.types.TimestampType.TIMESTAMP
+import io.delta.kernel.types.VariantType.VARIANT
 import io.delta.kernel.types._
 import io.delta.kernel.utils.CloseableIterable.{emptyIterable, inMemoryIterable}
 import io.delta.kernel.utils.CloseableIterable
@@ -82,10 +83,10 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
       val txnBuilder = table.createTransactionBuilder(engine, testEngineInfo, CREATE_TABLE)
       val ex = intercept[KernelException] {
         txnBuilder
-          .withSchema(engine, new StructType().add("ts_ntz", TIMESTAMP_NTZ))
+          .withSchema(engine, new StructType().add("variant", VARIANT))
           .build(engine)
       }
-      assert(ex.getMessage.contains("Kernel doesn't support writing data of type: timestamp_ntz"))
+      assert(ex.getMessage.contains("Kernel doesn't support writing data of type: variant"))
     }
   }
 
@@ -704,6 +705,7 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
               case _: BinaryType => Literal.ofBinary(vector.getBinary(rowId))
               case _: DateType => Literal.ofDate(vector.getInt(rowId))
               case _: TimestampType => Literal.ofTimestamp(vector.getLong(rowId))
+              case _: TimestampNTZType => Literal.ofTimestampNtz(vector.getLong(rowId))
               case _ =>
                 throw new IllegalArgumentException(s"Unsupported type: ${vector.getDataType}")
             }
@@ -990,7 +992,6 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
             Some(new MapType(newKeyType, newValueType, m.isValueContainsNull))
           case _ => None
         }
-      case _: TimestampNTZType => None // ignore
       case s: StructType =>
         val newType = removeUnsupportedTypes(s);
         if (newType.length() > 0) {

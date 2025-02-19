@@ -300,11 +300,6 @@ public class TableFeatures {
     }
 
     @Override
-    public boolean hasKernelWriteSupport(Metadata metadata) {
-      return false; // TODO: yet to be implemented in Kernel
-    }
-
-    @Override
     public boolean metadataRequiresFeatureToBeEnabled(Protocol protocol, Metadata metadata) {
       return hasTypeColumn(metadata.getSchema(), TIMESTAMP_NTZ);
     }
@@ -397,6 +392,7 @@ public class TableFeatures {
               add("columnMapping");
               add("typeWidening-preview");
               add("typeWidening");
+              add("timestampNtz");
               add(DOMAIN_METADATA_FEATURE_NAME);
               add(ROW_TRACKING_FEATURE_NAME);
             }
