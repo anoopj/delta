@@ -48,6 +48,7 @@ import io.delta.kernel.utils.CloseableIterable.{emptyIterable, inMemoryIterable}
 import io.delta.kernel.utils.CloseableIterable
 import io.delta.kernel.utils.CloseableIterable.{emptyIterable, inMemoryIterable}
 
+/** Transaction commit in this suite IS REQUIRED TO use commitTransaction than .commit */
 class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase {
 
   ///////////////////////////////////////////////////////////////////////////
@@ -99,7 +100,7 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
       val txnBuilder = table.createTransactionBuilder(engine, testEngineInfo, CREATE_TABLE)
 
       val txn = txnBuilder.withSchema(engine, testSchema).build(engine)
-      txn.commit(engine, emptyIterable())
+      commitTransaction(txn, engine, emptyIterable())
 
       {
         val ex = intercept[TableAlreadyExistsException] {
@@ -133,7 +134,7 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
 
       assert(txn.getSchema(engine) === testSchema)
       assert(txn.getPartitionColumns(engine) === Seq.empty.asJava)
-      val txnResult = txn.commit(engine, emptyIterable())
+      val txnResult = commitTransaction(txn, engine, emptyIterable())
 
       assert(txnResult.getVersion === 0)
       assertCheckpointReadiness(txnResult, isReadyForCheckpoint = false)
@@ -349,7 +350,7 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
       assert(txn.getSchema(engine) === schema)
       // Expect the partition column name is exactly same as the one in the schema
       assert(txn.getPartitionColumns(engine) === Seq("Part1", "part2").asJava)
-      val txnResult = txn.commit(engine, emptyIterable())
+      val txnResult = commitTransaction(txn, engine, emptyIterable())
 
       assert(txnResult.getVersion === 0)
       assertCheckpointReadiness(txnResult, isReadyForCheckpoint = false)
@@ -367,7 +368,7 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
       val table = Table.forPath(engine, tablePath)
       val txnBuilder = table.createTransactionBuilder(engine, testEngineInfo, CREATE_TABLE)
       val txn = txnBuilder.withSchema(engine, schema).build(engine)
-      val txnResult = txn.commit(engine, emptyIterable())
+      val txnResult = commitTransaction(txn, engine, emptyIterable())
 
       assert(txnResult.getVersion === 0)
       assertCheckpointReadiness(txnResult, isReadyForCheckpoint = false)
@@ -437,12 +438,12 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
       val stagedFiles = stageData(txnState, Map.empty, dataBatches1)
 
       val stagedActionsIterable = inMemoryIterable(stagedFiles)
-      val commitResult = txn.commit(engine, stagedActionsIterable)
+      val commitResult = commitTransaction(txn, engine, stagedActionsIterable)
       assert(commitResult.getVersion == 0)
 
       // try to commit the same transaction and expect failure
       val ex = intercept[IllegalStateException] {
-        txn.commit(engine, stagedActionsIterable)
+        commitTransaction(txn, engine, stagedActionsIterable)
       }
       assert(ex.getMessage.contains(
         "Transaction is already attempted to commit. Create a new transaction."))
@@ -564,7 +565,10 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
         // partition cols are not written in the commit info for inserts
         val partitionBy = if (i == 0) expPartCols else null
         verifyCommitInfo(tblPath, version = i, partitionBy, operation = WRITE)
-        verifyWrittenContent(tblPath, schema, if (i == 0) expV0Data else expV0Data ++ expV1Data)
+        verifyWrittenContent(
+          tblPath,
+          schema,
+          if (i == 0) expV0Data else expV0Data ++ expV1Data)
       }
     }
   }
@@ -798,6 +802,8 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
 
   test("insert into table - idempotent writes") {
     withTempDirAndEngine { (tblPath, engine) =>
+      // TODO: re-enable when CRC_FULL post commit hook is added, txn2 requires CRC_FULL
+      assume(this.suiteName != ("DeltaTableWriteWithCrcSuite"))
       val data = Seq(Map("part1" -> ofInt(1), "part2" -> ofInt(2)) -> dataPartitionBatches1)
       var expData = Seq.empty[TestRow] // as the data in inserted, update this.
 
@@ -826,7 +832,7 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
           txn: Transaction,
           actions: CloseableIterable[Row],
           expTblVer: Long): Unit = {
-        val commitResult = txn.commit(engine, actions)
+        val commitResult = commitTransaction(txn, engine, actions)
 
         expData = expData ++ data.flatMap(_._2).flatMap(_.toTestRows)
 
@@ -895,6 +901,8 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
 
   test("conflicts - creating new table - table created by other txn after current txn start") {
     withTempDirAndEngine { (tablePath, engine) =>
+      // TODO: re-enable when CRC_FULL post commit hook is added
+      assume(this.suiteName != ("DeltaTableWriteWithCrcSuite"))
       val losingTx = createTestTxn(engine, tablePath, Some(testSchema))
 
       // don't commit losingTxn, instead create a new txn and commit it
@@ -943,6 +951,8 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
   // Different scenarios that have multiple winning txns and with a checkpoint in between.
   Seq(1, 5, 12).foreach { numWinningTxs =>
     test(s"conflicts - concurrent data append ($numWinningTxs) after the losing txn has started") {
+      // TODO: re-enable when CRC_FULL post commit hook is added
+      assume(this.suiteName != ("DeltaTableWriteWithCrcSuite"))
       withTempDirAndEngine { (tablePath, engine) =>
         val testData = Seq(Map.empty[String, Literal] -> dataBatches1)
         var expData = Seq.empty[TestRow]
