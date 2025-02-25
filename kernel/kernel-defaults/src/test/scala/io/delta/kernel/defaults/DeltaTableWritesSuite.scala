@@ -33,7 +33,7 @@ import io.delta.kernel.expressions.Literal._
 import io.delta.kernel.hook.PostCommitHook.PostCommitHookType
 import io.delta.kernel.internal.{SnapshotImpl, TableConfig}
 import io.delta.kernel.internal.checkpoints.CheckpointerSuite.selectSingleElement
-import io.delta.kernel.internal.util.ColumnMapping
+import io.delta.kernel.internal.util.{ColumnMapping, VectorUtils}
 import io.delta.kernel.internal.util.SchemaUtils.casePreservingPartitionColNames
 import io.delta.kernel.types._
 import io.delta.kernel.types.DateType.DATE
@@ -44,6 +44,8 @@ import io.delta.kernel.types.TimestampNTZType.TIMESTAMP_NTZ
 import io.delta.kernel.types.TimestampType.TIMESTAMP
 import io.delta.kernel.utils.CloseableIterable
 import io.delta.kernel.utils.CloseableIterable.{emptyIterable, inMemoryIterable}
+
+import org.apache.spark.sql.delta.DeltaTableFeatureException
 
 /** Transaction commit in this suite IS REQUIRED TO use commitTransaction than .commit */
 class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase {
@@ -1322,5 +1324,66 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
     } else {
       assert(meta.get(ColumnMapping.COLUMN_MAPPING_PHYSICAL_NAME_KEY) == expPhyName)
     }
+  }
+
+  test("create table TIMESTAMP_NTZ type should auto-enable the reader/writer feature") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      val table = Table.forPath(engine, tablePath)
+      val txnBuilder = table.createTransactionBuilder(engine, testEngineInfo, CREATE_TABLE)
+
+      val testSchema = new StructType().add("tz", TimestampNTZType.TIMESTAMP_NTZ)
+      val txn = txnBuilder
+        .withSchema(engine, testSchema)
+        .build(engine)
+      val txnResult = commitTransaction(txn, engine, emptyIterable())
+
+      assert(txnResult.getVersion === 0)
+      val protocol = getProtocolActionFromCommit(engine, table, 0)
+      assert(protocol.isDefined)
+      assert(protocol.get.getInt(0) == 3)
+      assert(protocol.get.getInt(1) == 7)
+      assert(VectorUtils.toJavaList(protocol.get.getArray(3)).contains("timestampNtz"))
+    }
+  }
+
+  test("create table without TIMESTAMP_NTZ type should use minimum protocol") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      val table = Table.forPath(engine, tablePath)
+      val txnBuilder = table.createTransactionBuilder(engine, testEngineInfo, CREATE_TABLE)
+
+      val txn = txnBuilder
+        .withSchema(engine, testSchema)
+        .build(engine)
+
+      assert(txn.getSchema(engine) === testSchema)
+      assert(txn.getPartitionColumns(engine) === Seq.empty.asJava)
+      val txnResult = commitTransaction(txn, engine, emptyIterable())
+
+      assert(txnResult.getVersion === 0)
+      val protocol = getProtocolActionFromCommit(engine, table, 0)
+      assert(protocol.isDefined)
+      assert(protocol.get.getInt(0) == 1)
+      assert(protocol.get.getInt(1) == 2)
+    }
+  }
+
+  test("schema evolution from Spark to add TIMESTAMP_NTZ type on a table created with kernel") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      val table = Table.forPath(engine, tablePath)
+      val txnBuilder = table.createTransactionBuilder(engine, testEngineInfo, CREATE_TABLE)
+      val txn = txnBuilder
+        .withSchema(engine, testSchema)
+        .build(engine)
+      val txnResult = commitTransaction(txn, engine, emptyIterable())
+
+      assert(txnResult.getVersion === 0)
+      assertThrows[DeltaTableFeatureException] {
+        spark.sql("ALTER TABLE delta.`" + tablePath + "` ADD COLUMN newCol TIMESTAMP_NTZ")
+      }
+      spark.sql("ALTER TABLE delta.`" + tablePath +
+        "` SET TBLPROPERTIES ('delta.feature.timestampNtz' = 'supported')")
+      spark.sql("ALTER TABLE delta.`" + tablePath + "` ADD COLUMN newCol TIMESTAMP_NTZ")
+    }
+
   }
 }
